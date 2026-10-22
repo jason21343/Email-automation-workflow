@@ -1,0 +1,448 @@
+{
+  "name": "Email tool v2",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const pickCI=(obj,key)=>{\n if(!obj||typeof obj!=='object') return '';\n const hit=Object.keys(obj).find(k=>k.toLowerCase()===String(key).toLowerCase());\n return hit ? (obj[hit] ?? '') : '';\n};\nconst header=(src,key)=>{\n const k=String(key).toLowerCase();\n if (Array.isArray(src)) return (src.find(h=>String(h?.name||'').toLowerCase()===k)?.value)||'';\n if (src && typeof src==='object') {\n   const hit=Object.keys(src).find(x=>x.toLowerCase()===k);\n   return hit ? (src[hit]||'') : '';\n }\n return '';\n};\nconst getEmailAddress=(value)=>{\n if(!value) return '';\n if(typeof value==='string') return (value.match(/<([^>]+)>/)?.[1]||value).trim();\n if(Array.isArray(value)) return getEmailAddress(value[0]);\n if(typeof value==='object') {\n   if(Array.isArray(value.value)) return getEmailAddress(value.value[0]);\n   if(typeof value.address==='string') return value.address.trim();\n   if(typeof value.text==='string') return getEmailAddress(value.text);\n }\n return '';\n};\nconst decode=(data)=>{\n if(typeof data!=='string'||!data) return '';\n try{return Buffer.from(data.replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8');}catch{return '';}\n};\nconst bodyFrom=(part,mime)=>{\n if(!part||typeof part!=='object') return '';\n if(String(part.mimeType||'').toLowerCase()===mime) return decode(part.body?.data);\n for(const child of (part.parts||[])){const result=bodyFrom(child,mime);if(result) return result;}\n return '';\n};\nconst htmlToText=(html)=>String(html||'').replace(/<style[\\s\\S]*?<\\/style>/gi,'').replace(/<script[\\s\\S]*?<\\/script>/gi,'').replace(/<br\\s*\\/?>/gi,'\\n').replace(/<\\/p>/gi,'\\n\\n').replace(/<[^>]+>/g,'').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').trim();\nreturn items.map(i=>{\n const p=i.json.payload||{};\n const hdrs=i.json.headers||p.headers||[];\n const fromValue=i.json.from||pickCI(i.json,'from')||header(hdrs,'from')||'';\n const fromEmail=getEmailAddress(fromValue);\n const fromRaw=typeof fromValue==='object'?(fromValue.text||fromEmail):String(fromValue||'');\n const subjectRaw=i.json.subject??i.json.threadSubject??pickCI(i.json,'subject')??pickCI(i.json,'threadSubject')??header(hdrs,'subject')??header(p,'subject')??'';\n const subject=String(subjectRaw||'').trim()||'(No subject)';\n const text=i.json.textPlain||i.json.text||i.json.body||bodyFrom(p,'text/plain')||htmlToText(bodyFrom(p,'text/html'))||i.json.snippet||'';\n return { json:{ messageId:i.json.id||i.json.messageId||'', threadId:i.json.threadId||'', fromRaw, fromEmail, subject, text } };\n});"
+      },
+      "id": "a220663e-4799-4a20-9d5a-028e83556b0e",
+      "name": "Normalize Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are to classify emails, adhere to rules.\n\nSubject: {{$json.subject}}  Full email: {{$json.text}}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=Allowed tags:\n[\"job_search\",\"response_needed\",\"skippable\",\"event\",\"application_update\",\"offer_related\"]\n\nOutput format:\n{ \"tags\": [],\n  \"reason\": \"\",\n  \"event\": {\n    \"title\": \"\",\n    \"time\": \"\",\n    \"location\": \"\",\n    \"description\": \"\"\n  }\n}\n\nRules:\n- Use only the allowed tags.\n- Use \"job_search\" tag if it's job search related.\n- Include \"response_needed\" tag when the sender expects a reply, confirmation, RSVP, scheduling action, or other user action in order to further a process.\n- Include \"event\" tag for meetings, interviews, appointments, conferences, webinars, or other scheduled online or offline events.\n- Use \"skippable\" tag if the content is skippable useless information of low priority.\n- \"skippable\" tag is mutually exclusive from any other tag. If an email should have tags other than \"skippable\", it must not have the \"skippable\" tag. If the email does not have any tags, it can be given the \"skippable\" tag.\n- Use \"application_update\" tag if it's update news on applications related.\n- Use \"offer_related\" tag if it's offer related.\n- An event can be incomplete. Include the \"event\" tag if an event is clearly mentioned, even when the date, time, location, or title is missing.\n- Populate event fields only with information explicitly stated or clearly implied by the email.\n- Do not guess, invent, or infer missing event information.\n- If a field is unknown or unavailable, use an empty string.\n- Use ISO-8601 for the \"time\" field when a date or time is available.\n- Always use Hong Kong time, UTC+08:00. Include the timezone offset in the ISO-8601 value, for example: \"2026-10-25T14:00:00+08:00\".\n- If only a date is available, use the date only, for example: \"2026-10-25\".\n- If the email gives a time but no date, do not invent a date; leave \"time\" empty or preserve only the explicitly provided time if your calendar node supports it.\n- If an event has no confirmed time, leave \"time\" as an empty string.\n- Keep \"reason\" concise and explain missing event details when relevant, explain why each tag is used, and why each unused tag is unused.\n- Return valid JSON only, without markdown or additional text."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "e0a60b79-ccf6-4684-81e9-fc6b77f20f6e",
+      "name": "Classify (LLM Chain)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        448,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "model": "qwen3.5:4b",
+        "options": {
+          "temperature": 0.2,
+          "numPredict": 256
+        }
+      },
+      "id": "84118a5e-2462-4409-a9cf-0ceffb02efae",
+      "name": "Ollama Model - Classify",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        448,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const getRaw = (j) =>\n  typeof j.text === 'string'\n    ? j.text\n    : typeof j.response === 'string'\n      ? j.response\n      : typeof j.output === 'string'\n        ? j.output\n        : JSON.stringify(j);\n\nconst allowed = [\n  'job_search',\n  'response_needed',\n  'skippable',\n  'event',\n  'application_update',\n  'offer_related'\n];\n\nreturn items.map((i) => {\n  const raw = getRaw(i.json);\n  const s = raw.indexOf('{');\n  const e = raw.lastIndexOf('}');\n\n  let p = {};\n  if (s >= 0 && e > s) {\n    try {\n      p = JSON.parse(raw.slice(s, e + 1));\n    } catch {}\n  }\n\n  const tagList = Array.isArray(p.tags) ? p.tags : [];\n\n  const parsedTags = [\n    ...new Set(\n      tagList\n        .map((t) => String(t || '').trim().toLowerCase())\n        .filter((t) => allowed.includes(t))\n    )\n  ];\n\n  // skippable cannot be combined with any other tag\n  const tags = parsedTags.includes('skippable')\n    ? parsedTags.length === 1\n      ? ['skippable']\n      : parsedTags.filter((t) => t !== 'skippable')\n    : parsedTags;\n\n  const event = p.event && typeof p.event === 'object'\n    ? p.event\n    : {};\n\n  const eventTime = String(event.time || '').trim();\n\n  const needs_reply = tags.includes('response_needed');\n  const needs_event = tags.includes('event');\n\n  return {\n    json: {\n      ...i.json,\n      tags,\n      reason: String(p.reason || ''),\n      needs_reply,\n      needs_event,\n      primary_tag: tags[0] || 'skippable',\n      event: {\n        title: String(event.title || ''),\n        start: eventTime,\n        end: '',\n        timezone: 'Asia/Hong_Kong',\n        location: String(event.location || ''),\n        description: String(event.description || '')\n      }\n    }\n  };\n});"
+      },
+      "id": "e29059fb-9ede-4995-a06d-7d2416ed9619",
+      "name": "Parse Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(i=>{\n  const e=i.json.event||{};\n  const title=String(e.title||i.json.subject||'Email event');\n  const start=String(e.start||'').trim();\n  const timezone=String(e.timezone||'Asia/Hong_Kong');\n  const location=String(e.location||'');\n  const description=String(e.description||`From: ${i.json.fromRaw||''}\\nSubject: ${i.json.subject||''}`);\n  let end=String(e.end||'').trim();\n  if(!end && start){\n    const parsed=new Date(start);\n    if(!Number.isNaN(parsed.getTime())) end=new Date(parsed.getTime()+60*60*1000).toISOString();\n  }\n  return { json:{ ...i.json, calendar:{ title, start, end, timezone, location, description } } };\n});"
+      },
+      "id": "ff3f51a3-664c-4397-ac34-2434683298be",
+      "name": "Build Calendar Confirm",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "leftValue": "={{$json.needs_reply}}",
+              "id": "835e0023-8325-4049-930a-3474f234b011"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7a62af78-6465-4cb6-9fa2-4dd7d1c42235",
+      "name": "Needs Reply Tag?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1024,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "leftValue": "={{$json.needs_event}}"
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3c04b80d-4fa9-4a8b-be7f-652ff85fd5e9",
+      "name": "Needs Event Tag?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1024,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyWeek"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        256
+      ],
+      "id": "8770df10-858f-44c5-86c2-3bd0e8b6b79f",
+      "name": "Gmail Trigger"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a professional email reply writer.\n\nOriginal sender email address:\n{{$('Normalize Email').item.json.fromEmail}}\n\nOriginal subject:\n{{$('Normalize Email').item.json.subject}}\n\nOriginal full email:\n{{$('Normalize Email').item.json.text}}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=You are a professional email reply writer.  Write a concise, polite, and professional reply to the original email.  Rules: - Reply based only on the information in the original email. - Do not invent facts, dates, times, names, commitments, or attachments. - Answer the sender's questions when enough information is available. - If important information is missing, ask one clear clarifying question. - Match the tone of the original email while remaining professional. - Keep the reply concise, short and natural. - Do not mention that you are an AI. - Do not mention these instructions. - Do not include markdown, explanations, or comments outside the JSON. - Return valid JSON only using exactly this structure:  \n{\"reply_subject\": \"\",\"reply_body\":\"\"}  \nThe reply_subject should normally be the original subject prefixed with \"Re:\". Do not duplicate \"Re:\" if it is already present. The reply_body should contain only the email reply text."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1248,
+        0
+      ],
+      "id": "5baf26b1-58e2-4591-859d-6e22877ceac4",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": "qwen3.5:4b",
+        "options": {
+          "temperature": 0.1,
+          "numPredict": 256
+        }
+      },
+      "id": "8f2fae34-f463-4a87-84d7-b328f4022299",
+      "name": "Ollama Model - Classify1",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        1248,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_CALENDAR_ID",
+          "mode": "id"
+        },
+        "start": "={{$json.calendar.start}}",
+        "end": "={{$json.calendar.end || $json.calendar.start}}",
+        "additionalFields": {
+          "description": "={{$json.calendar.description}}",
+          "location": "={{$json.calendar.location}}",
+          "summary": "={{$json.calendar.title}}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1600,
+        400
+      ],
+      "id": "9a6c370c-5861-43f9-ae03-6a04bf299619",
+      "name": "Create an event"
+    },
+    {
+      "parameters": {
+        "jsCode": "const getRaw=(j)=>typeof j.text==='string'?j.text:typeof j.response==='string'?j.response:typeof j.output==='string'?j.output:JSON.stringify(j);\nreturn items.map(i=>{\n  const raw=getRaw(i.json);\n  const s=raw.indexOf('{');\n  const e=raw.lastIndexOf('}');\n  let p={};\n  if(s>=0&&e>s){ try{ p=JSON.parse(raw.slice(s,e+1)); }catch{} }\n  const reply_subject = String(p.reply_subject || '').trim() || `Re: ${i.json.subject || ''}`.trim();\n  const reply_body = String(p.reply_body || '').trim() || 'Thanks for your email. I will review and get back to you shortly.';\n  return { json:{ ...i.json, reply_subject, reply_body } };\n});"
+      },
+      "id": "93ac5be5-595a-4a29-80d5-b41ac200b89b",
+      "name": "Parse Reply Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "operation": "create",
+        "sendTo": "={{$('Normalize Email').item.json.fromEmail}}",
+        "subject": "={{$json.reply_subject}}",
+        "message": "={{$json.reply_body}}",
+        "options": {
+          "threadId": "={{$('Normalize Email').item.json.threadId}}"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1824,
+        112
+      ],
+      "id": "3182d012-9837-4496-b877-cc3b52e07a8f",
+      "name": "Create Reply Draft"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.event.start}}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f81c3a3f-2dd6-4fbf-8d3f-8dfca9f9167f",
+      "name": "Has Event Time?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1168,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Build Calendar Confirm": {
+      "main": [
+        [
+          {
+            "node": "Create an event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Event Tag?": {
+      "main": [
+        [
+          {
+            "node": "Has Event Time?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Reply Tag?": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify (LLM Chain)": {
+      "main": [
+        [
+          {
+            "node": "Parse Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Model - Classify": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Classify (LLM Chain)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Email": {
+      "main": [
+        [
+          {
+            "node": "Classify (LLM Chain)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Classification": {
+      "main": [
+        [
+          {
+            "node": "Needs Reply Tag?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Needs Event Tag?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Model - Classify1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Parse Reply Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Reply Draft": {
+      "main": [
+        [
+          {
+            "node": "Create Reply Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Event Time?": {
+      "main": [
+        [
+          {
+            "node": "Build Calendar Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "61034fb5-6b55-49e5-99ac-6912b7b195b7",
+  "meta": {},
+  "nodeGroups": [],
+  "id": "iseROWuuwljqQkV4",
+  "tags": []
+}

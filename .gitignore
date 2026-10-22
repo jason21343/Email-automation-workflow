@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+
+*.key
+*.pem
+credentials.json
+client_secret*.json
+
+*-private.json
+n8n-export-private.json
+Email tool v2.json
